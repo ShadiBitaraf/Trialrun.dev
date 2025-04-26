@@ -1,32 +1,84 @@
 {
-    "description": "asdfadf",
-    "isActive": true,
-    "customization": {
+  "description": "asdfa",
+  "isActive": true,
+  "customization": {
       "buttonColor": "#38B2AC",
       "backgroundColor": "#1A202C",
       "userMessageColor": "#3182CE",
       "botMessageColor": "#4A5568"
-    },
-    "createdAt": "2025-04-26T20:11:40.119000+00:00",
-    "systemPrompt": "ur a search engine",
-    "settings": {
+  },
+  "createdAt": "2025-04-26T20:52:12.675000+00:00",
+  "systemPrompt": "asdf",
+  "settings": {
       "mcpServers": {
-        "exa": {
-          "args": [
-            "-y",
-            "@smithery/cli@latest",
-            "run",
-            "exa",
-            "--config",
-            "{\"exaApiKey\":\"72b9cdde-902c-467a-a2d9-8c6961747d11\"}",
-            "--key",
-            "2d609d29-d94f-435f-ba4f-88536ba0528d"
-          ],
-          "command": "npx"
-        }
+          "formula1-mcp": {
+              "args": [
+                  "-y",
+                  "@smithery/cli@latest",
+                  "run",
+                  "@Panth1823/formula1-mcp",
+                  "--config",
+                  "{\"CACHE_ENABLED\":false}",
+                  "--key",
+                  "2d609d29-d94f-435f-ba4f-88536ba0528d"
+              ],
+              "command": "npx"
+          },
+          "jetskiAI": {
+              "url": "https://jetskiapi.fly.dev/mcp/sse"
+          },
+          "weather": {
+              "github": "https://github.com/shashankshriram123/local_mcp_test.git",
+              "args": [
+                  "--directory",
+                  "/",
+                  "run",
+                  "weather.py"
+              ],
+              "env": {
+                  "OPENWEATHER_API_KEY": ""
+              },
+              "command": "uv"
+          },
+          "mcp_tool": {
+              "args": [
+                  "-y",
+                  "@smithery/cli@latest",
+                  "run",
+                  "@MrCare/mcp_tool",
+                  "--config",
+                  "{\"port\":8000,\"openweathermapApiKey\":\"da809993-d94c-4086-bc41-c9093b1bb5a9\"}",
+                  "--key",
+                  "2d609d29-d94f-435f-ba4f-88536ba0528d"
+              ],
+              "command": "npx"
+          },
+          "mcp-youtube-transcript": {
+              "args": [
+                  "-y",
+                  "@smithery/cli@latest",
+                  "run",
+                  "@sinco-lab/mcp-youtube-transcript",
+                  "--key",
+                  "2d609d29-d94f-435f-ba4f-88536ba0528d"
+              ],
+              "command": "npx"
+          },
+          "exa": {
+              "args": [
+                  "-y",
+                  "@smithery/cli@latest",
+                  "run",
+                  "exa",
+                  "--config",
+                  "{\"exaApiKey\":\"da809993-d94c-4086-bc41-c9093b1bb5a9\"}",
+                  "--key",
+                  "2d609d29-d94f-435f-ba4f-88536ba0528d"
+              ],
+              "command": "npx"
+          }
       }
-    },
-    "updatedAt": "2025-04-26T20:11:40.119000+00:00",
-    "name": "exa_example"
-  }
-  
+  },
+  "updatedAt": "2025-04-26T20:52:12.675000+00:00",
+  "name": "asdf"
+}

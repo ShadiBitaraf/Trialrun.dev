@@ -1,5 +1,58 @@
 {
   "mcpServers": {
+    "formula1-mcp": {
+      "args": [
+        "-y",
+        "@smithery/cli@latest",
+        "run",
+        "@Panth1823/formula1-mcp",
+        "--config",
+        "{\"CACHE_ENABLED\":false}",
+        "--key",
+        "2d609d29-d94f-435f-ba4f-88536ba0528d"
+      ],
+      "command": "npx"
+    },
+    "jetskiAI": {
+      "url": "https://jetskiapi.fly.dev/mcp/sse"
+    },
+    "weather": {
+      "github": "https://github.com/shashankshriram123/local_mcp_test.git",
+      "args": [
+        "--directory",
+        "/Users/shashankshriram/Desktop/jetski/hackathon/Trialrun.dev/mcp_sandboxes/local_mcp_test",
+        "run",
+        "weather.py"
+      ],
+      "env": {
+        "OPENWEATHER_API_KEY": ""
+      },
+      "command": "uv"
+    },
+    "mcp_tool": {
+      "args": [
+        "-y",
+        "@smithery/cli@latest",
+        "run",
+        "@MrCare/mcp_tool",
+        "--config",
+        "{\"port\":8000,\"openweathermapApiKey\":\"da809993-d94c-4086-bc41-c9093b1bb5a9\"}",
+        "--key",
+        "2d609d29-d94f-435f-ba4f-88536ba0528d"
+      ],
+      "command": "npx"
+    },
+    "mcp-youtube-transcript": {
+      "args": [
+        "-y",
+        "@smithery/cli@latest",
+        "run",
+        "@sinco-lab/mcp-youtube-transcript",
+        "--key",
+        "2d609d29-d94f-435f-ba4f-88536ba0528d"
+      ],
+      "command": "npx"
+    },
     "exa": {
       "args": [
         "-y",
@@ -7,7 +60,7 @@
         "run",
         "exa",
         "--config",
-        "{\"exaApiKey\":\"72b9cdde-902c-467a-a2d9-8c6961747d11\"}",
+        "{\"exaApiKey\":\"da809993-d94c-4086-bc41-c9093b1bb5a9\"}",
         "--key",
         "2d609d29-d94f-435f-ba4f-88536ba0528d"
       ],
