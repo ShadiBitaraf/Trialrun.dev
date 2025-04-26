@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "exa": {
+      "args": [
+        "-y",
+        "@smithery/cli@latest",
+        "run",
+        "exa",
+        "--config",
+        "{\"exaApiKey\":\"72b9cdde-902c-467a-a2d9-8c6961747d11\"}",
+        "--key",
+        "2d609d29-d94f-435f-ba4f-88536ba0528d"
+      ],
+      "command": "npx"
+    }
+  }
+}

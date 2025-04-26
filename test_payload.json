@@ -1,0 +1,32 @@
+{
+    "description": "asdfadf",
+    "isActive": true,
+    "customization": {
+      "buttonColor": "#38B2AC",
+      "backgroundColor": "#1A202C",
+      "userMessageColor": "#3182CE",
+      "botMessageColor": "#4A5568"
+    },
+    "createdAt": "2025-04-26T20:11:40.119000+00:00",
+    "systemPrompt": "ur a search engine",
+    "settings": {
+      "mcpServers": {
+        "exa": {
+          "args": [
+            "-y",
+            "@smithery/cli@latest",
+            "run",
+            "exa",
+            "--config",
+            "{\"exaApiKey\":\"72b9cdde-902c-467a-a2d9-8c6961747d11\"}",
+            "--key",
+            "2d609d29-d94f-435f-ba4f-88536ba0528d"
+          ],
+          "command": "npx"
+        }
+      }
+    },
+    "updatedAt": "2025-04-26T20:11:40.119000+00:00",
+    "name": "exa_example"
+  }
+  
