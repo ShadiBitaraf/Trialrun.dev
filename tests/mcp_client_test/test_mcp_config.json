@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "weather": {
+      "url": "https://weather-mcp-server.example.com/api"
+    },
+    "googleMaps": {
+      "url": "https://maps-mcp-server.example.com/api"
+    }
+  }
+}
