@@ -1,0 +1,30 @@
+# =============================================================================
+# Docker Compose Configuration for Trialrun.dev
+# 
+# This file defines the services for the Trialrun.dev application:
+# - backend: The FastAPI application serving the API endpoints and integrating with Claude
+# 
+# The configuration includes:
+# - Port mapping for the API
+# - Volume mounting for code changes
+# - Environment variable configuration
+# =============================================================================
+
+version: '3'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - SANDBOX_ID=local-sandbox
+      - BASE_URL=http://localhost:8000
+      - APP_ENV=development
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+    command: python Backend/startup.py 
