@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrialRun Widget Demo</title>
+    <link rel="stylesheet" href="./src/index.css" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      
+      .content {
+        max-width: 800px;
+        margin: 0 auto;
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      
+      h1 {
+        color: #333;
+      }
+      
+      p {
+        line-height: 1.6;
+      }
+
+      .widget-container {
+        width: 100%;
+        height: 600px;
+        margin-top: 30px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      
+      .demo-section {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+      }
+      
+      .code-example {
+        background-color: #f8f8f8;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: monospace;
+        margin-bottom: 20px;
+        overflow-x: auto;
+      }
+      
+      .integration-methods {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      
+      .method-card {
+        background-color: #f0f8ff;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #3182CE;
+      }
+      
+      .method-title {
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="content">
+      <h1>TrialRun Widget Demo</h1>
+      <p>This page demonstrates the TrialRun chatbot widget embedded in a website.</p>
+      <p>The widget is customized based on the configuration retrieved from the TrialRun API using the provided sandbox ID.</p>
+      
+      <!-- Widget container with custom dimensions -->
+      <div class="widget-container" id="widget-container-1">
+        <!-- Method 1: Using the custom element directly -->
+        <trialrun-widget 
+          sandbox-id="fXHtmX8BRXPh0irC5DrA"
+          playground-width="100%"
+          playground-height="100%"
+          card-width="100%"
+          card-height="100%">
+        </trialrun-widget>
+      </div>
+      
+      <div class="demo-section">
+        <h2>Integration Methods</h2>
+        <p>There are multiple ways to integrate the TrialRun widget into your website:</p>
+        
+        <div class="integration-methods">
+          <div class="method-card">
+            <div class="method-title">Method 1: Custom Element</div>
+            <p>Add the widget script to your page, then use the custom element anywhere in your HTML:</p>
+            <div class="code-example">
+              &lt;script src="https://your-cdn.com/trialrun-widget.umd.cjs"&gt;&lt;/script&gt;<br><br>
+              &lt;trialrun-widget sandbox-id="your-sandbox-id"&gt;&lt;/trialrun-widget&gt;
+            </div>
+            <p>This is the method used in the demo above.</p>
+          </div>
+          
+          <div class="method-card">
+            <div class="method-title">Method 2: Auto-initialization</div>
+            <p>Add the widget script with data attributes to automatically create the widget:</p>
+            <div class="code-example">
+              &lt;div id="my-container"&gt;&lt;/div&gt;<br><br>
+              &lt;script 
+                src="https://your-cdn.com/trialrun-widget.umd.cjs" 
+                data-sandbox-id="your-sandbox-id"
+                data-target="#my-container"&gt;
+              &lt;/script&gt;
+            </div>
+            <p>The widget will be automatically created and placed in the specified container.</p>
+          </div>
+          
+          <div class="method-card">
+            <div class="method-title">Method 3: JavaScript API</div>
+            <p>Create the widget programmatically using JavaScript:</p>
+            <div class="code-example">
+              &lt;script src="https://your-cdn.com/trialrun-widget.umd.cjs" data-auto-init="false"&gt;&lt;/script&gt;<br><br>
+              &lt;script&gt;
+                const widget = createTrialRunWidget({
+                  sandboxId: 'your-sandbox-id',
+                  container: document.getElementById('my-container'),
+                  playgroundWidth: '100%',
+                  playgroundHeight: '500px'
+                });
+              &lt;/script&gt;
+            </div>
+            <p>This gives you more control over when and how the widget is created.</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="demo-section">
+        <h2>JavaScript API Demo</h2>
+        <p>Click the button below to create another widget using the JavaScript API:</p>
+        <button id="create-widget-btn" style="padding: 8px 16px; margin-bottom: 20px;">Create Widget</button>
+        <div class="widget-container" id="widget-container-2"></div>
+      </div>
+    </div>
+    
+    <!-- Load the widget script -->
+    <script src="./dist/trialrun-widget.umd.cjs" data-auto-init="false"></script>
+    
+    <!-- Demo script for the JavaScript API -->
+    <script>
+      document.getElementById('create-widget-btn').addEventListener('click', function() {
+        const container = document.getElementById('widget-container-2');
+        
+        // Clear any existing widgets
+        container.innerHTML = '';
+        
+        // Create a new widget
+        createTrialRunWidget({
+          sandboxId: 'fXHtmX8BRXPh0irC5DrA',
+          container: container,
+          playgroundWidth: '100%',
+          playgroundHeight: '100%',
+          cardWidth: '95%',
+          cardHeight: '95%'
+        });
+        
+        // Disable the button after creating the widget
+        this.disabled = true;
+        this.textContent = 'Widget Created';
+      });
+    </script>
+  </body>
+</html>
