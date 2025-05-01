@@ -595,83 +595,50 @@ class ConfigureRequest(BaseModel):
 async def configure(req: ConfigureRequest):
     """
     Add or update MCP server configurations.
-    
-    Example request:
-    
-    {
-        "servers": {
-            "my_mcp_server": {
-                "command": "python",
-                "args": ["path/to/script.py"],
-                "env": {"API_KEY": "your-api-key"}
-            },
-            "remote_server": {
-                "url": "https://example.com/mcp"
-            },
-            "github_server": {
-                "github": "https://github.com/username/repo",
-                "command": "python",
-                "args": ["main.py"]
-            }
-        }
-    }
-    
-    
-    Each server configuration can include:
-    - command: The command to run (for local servers)
-    - args: List of arguments for the command
-    - url: URL for remote servers
-    - env: Environment variables
-    - github: GitHub repository URL to clone
     """
     if not client_mgr.initialized:
         raise HTTPException(503, "MCP not ready")
     
-    # Get current config
-    current_config = client_mgr._cfg.copy()
-    repo = Path("./mcp_sandboxes").resolve()
-    
-    # Process each server in the request
-    for name, server_config in req.servers.items():
-        # Convert pydantic model to dict
-        config_dict = server_config.model_dump(exclude_none=True)
+    try:
+        # Convert request to dict
+        servers_dict = {name: config.model_dump(exclude_none=True) 
+                       for name, config in req.servers.items()}
         
-        # Normalize the server configuration
-        try:
-            norm, env_vars = _normalise_server(name, config_dict, repo)
-            
-            # Update the current configuration
-            current_config[name] = norm
-            
-            # If there are environment variables, we should handle them
-            # For now, we'll just log them
-            if env_vars:
-                log.info(f"Server '{name}' has environment variables: {env_vars}")
-        except Exception as e:
-            log.error(f"Error normalizing server '{name}': {e}")
-            raise HTTPException(400, f"Error configuring server '{name}': {str(e)}")
-    
-    # Update the client manager configuration
-    client_mgr._cfg = current_config
-    
-    # Update mcp.json file
-    Path("mcp.json").write_text(json.dumps({"mcpServers": current_config}, indent=2))
-    
-    # Close existing connections
-    await client_mgr.close()
-    
-    # Reinitialize with new config
-    await client_mgr.initialize()
-    
-    # Update the config hash
-    global LAST_CONFIG_HASH
-    LAST_CONFIG_HASH = _hash_config(current_config)
-    
-    return {
-        "status": "success",
-        "message": f"Added/updated {len(req.servers)} MCP server(s)",
-        "servers": list(current_config.keys())
-    }
+        # Create a payload structure that init_mcp can understand
+        payload = {
+            "settings": {
+                "mcpServers": servers_dict
+            }
+        }
+        
+        # Close existing connections first
+        await client_mgr.close()
+        
+        # Use the same initialization process as during startup
+        session_id = init_mcp(payload)
+        
+        # Reload the configuration from the newly written mcp.json
+        with open("mcp.json", "r") as f:
+            mcp_config = json.load(f)
+        
+        # Update the client manager configuration
+        client_mgr._cfg = mcp_config.get("mcpServers", {})
+        
+        # Reinitialize with new config
+        await client_mgr.initialize()
+        
+        # Update the config hash
+        global LAST_CONFIG_HASH
+        LAST_CONFIG_HASH = _hash_config(client_mgr._cfg)
+        
+        return {
+            "status": "success",
+            "message": f"Added/updated {len(req.servers)} MCP server(s)",
+            "servers": list(client_mgr._cfg.keys())
+        }
+    except Exception as e:
+        log.error(f"Error configuring servers: {e}")
+        raise HTTPException(500, f"Error configuring servers: {str(e)}")
 from fastapi import Body
 
 # Add this to the pydantic models section
@@ -718,38 +685,37 @@ async def save_user_config(config_text: str = Body(...)):
         config_path = Path("user_config.json")
         config_path.write_text(config_text)
         
-        # Apply the configuration
-        repo = Path("./mcp_sandboxes").resolve()
-        current_config = client_mgr._cfg.copy()
+        # Create a payload structure that init_mcp can understand
+        payload = {
+            "settings": {
+                "mcpServers": config_data["servers"]
+            }
+        }
         
-        for name, server_config in config_data["servers"].items():
-            try:
-                norm, env_vars = _normalise_server(name, server_config, repo)
-                current_config[name] = norm
-            except Exception as e:
-                log.error(f"Error normalizing server '{name}': {e}")
-                # Continue with other servers even if one fails
+        # Close existing connections first
+        await client_mgr.close()
+        
+        # Use the same initialization process as during startup
+        session_id = init_mcp(payload)
+        
+        # Reload the configuration from the newly written mcp.json
+        with open("mcp.json", "r") as f:
+            mcp_config = json.load(f)
         
         # Update the client manager configuration
-        client_mgr._cfg = current_config
-        
-        # Update mcp.json file
-        Path("mcp.json").write_text(json.dumps({"mcpServers": current_config}, indent=2))
-        
-        # Close existing connections
-        await client_mgr.close()
+        client_mgr._cfg = mcp_config.get("mcpServers", {})
         
         # Reinitialize with new config
         await client_mgr.initialize()
         
         # Update the config hash
         global LAST_CONFIG_HASH
-        LAST_CONFIG_HASH = _hash_config(current_config)
+        LAST_CONFIG_HASH = _hash_config(client_mgr._cfg)
         
         return {
             "status": "success",
             "message": "User configuration saved and applied",
-            "servers": list(current_config.keys())
+            "servers": list(client_mgr._cfg.keys())
         }
     except HTTPException:
         raise
