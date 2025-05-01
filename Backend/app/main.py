@@ -1,9 +1,10 @@
 """
-FastAPI entry-point – 2025-04-28 safe build ②
+FastAPI entry-point – 2025-04-28 safe build ③
 """
-
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -11,16 +12,18 @@ from pathlib import Path
 from typing import Any, Dict, List, get_origin
 
 import httpx
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from client_manager import MCPClientManager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from Backend.init import _normalise_server
+from init import _normalise_server
 
-# ─────────────────── env / logging
+# ─────────────────── env / logging ───────────────────
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("app")
@@ -30,31 +33,58 @@ HANDSHAKE_URL = os.getenv("HANDSHAKE_URL",
                           "https://api-rough-bush-2430.fly.dev/handshake")
 BASE_URL      = os.getenv("BASE_URL",    "http://localhost:8000")
 
-anthropic  = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-client_mgr = MCPClientManager()
+anthropic_async = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client_mgr      = MCPClientManager()
 
 POLICY_PROMPT = """
 You are connected to multiple MCP tool servers.
 Emit a tool_use whenever it helps, then use the tool_result you receive.
+Make sure to give the desired input and prompt the user of that input when needed.
 """.strip()
+
 SYSTEM_PROMPT: str | None = None
 
-# ─────────────────── pydantic models
+# ─────────────────── pydantic models ───────────────────
+
+
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] = []
 
+
 class ToolCallResult(BaseModel):
     content: List[Dict[str, Any]]
 
-# ─────────────────── helpers
+# ─────────────────── helpers ───────────────────
+
+
 def _py_to_json_type(tp: Any) -> str:
     origin = get_origin(tp) or tp
-    if origin is int:                 return "integer"
-    if origin in (float, complex):    return "number"
-    if origin is bool:                return "boolean"
-    if origin in (list, tuple, set):  return "array"
+    if origin is int:
+        return "integer"
+    if origin in (float, complex):
+        return "number"
+    if origin is bool:
+        return "boolean"
+    if origin in (list, tuple, set):
+        return "array"
     return "string"
+
+
+def _to_json_safe(o: Any) -> Any:
+    """Return something that json.dumps can handle."""
+    if isinstance(o, (str, int, float, bool)) or o is None:
+        return o
+    if dataclasses.is_dataclass(o):
+        return dataclasses.asdict(o)
+    if isinstance(o, BaseModel):
+        return o.model_dump()
+    if isinstance(o, dict):
+        return {k: _to_json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple, set)):
+        return [_to_json_safe(v) for v in o]
+    return str(o)
+
 
 async def _handshake() -> Dict[str, Any]:
     async with httpx.AsyncClient() as s:
@@ -77,9 +107,9 @@ async def _handshake() -> Dict[str, Any]:
         or data.get("mcp_config", {}).get("mcpServers")
         or {}
     )
-
     repo = Path("./mcp_sandboxes").resolve()
     servers: Dict[str, Dict[str, Any]] = {}
+
     for name, conf in raw.items():
         if "url" in conf and "command" not in conf:
             log.warning("Skipping remote MCP server '%s' (%s)", name, conf["url"])
@@ -91,34 +121,46 @@ async def _handshake() -> Dict[str, Any]:
     Path("mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
     return servers
 
-# ─────────────────── FastAPI
+# ─────────────────── FastAPI ───────────────────
+
 app = FastAPI(title="Trialrun.dev Sandbox")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
     allow_credentials=True,
 )
+
 
 @app.on_event("startup")
 async def _startup():
     client_mgr._cfg = await _handshake()
     await client_mgr.initialize()
 
+
 @app.on_event("shutdown")
 async def _shutdown():
     await client_mgr.close()
 
-# ─────────────────── utility endpoints
+# ─────────────────── utility endpoints ───────────────────
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "servers": len(client_mgr._cfg),
-            "sdk_connected": client_mgr.initialized}
+    return {
+        "status": "ok",
+        "servers": len(client_mgr._cfg),
+        "sdk_connected": client_mgr.initialized,
+    }
+
 
 @app.get("/tools")
 async def tools():
     if not client_mgr.initialized:
         raise HTTPException(503, "MCP not ready")
     return {"tools": [t.model_dump() for t in await client_mgr.list_tools()]}
+
 
 @app.post("/tools/execute", response_model=ToolCallResult)
 async def exec_tool(req: Dict[str, Any]):
@@ -127,7 +169,9 @@ async def exec_tool(req: Dict[str, Any]):
     res = await client_mgr.call_tool(req["name"], req.get("arguments", {}))
     return {"content": res}
 
-# ─────────────────── main chat endpoint
+# ─────────────────── main chat (non-stream) ───────────────────
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not client_mgr.initialized:
@@ -136,6 +180,7 @@ async def chat(req: ChatRequest):
     # Build Anthropic-style tool list with JSON-schemas
     tools_json: List[Dict[str, Any]] = []
     for tool in await client_mgr.list_tools():
+        # In the tools endpoint or where you define your tools
         schema = {"type": "object", "properties": {}, "required": []}
         for arg in getattr(tool, "arguments", []):
             jtype = _py_to_json_type(getattr(arg, "type_", str) or str)
@@ -145,16 +190,19 @@ async def chat(req: ChatRequest):
             }
             if getattr(arg, "required", True) is not False:
                 schema["required"].append(arg.name)
-        tools_json.append({
-            "name": tool.name,
-            "description": getattr(tool, "description", "") or "",
-            "input_schema": schema,
-        })
 
-    messages   = [{"role": "user", "content": req.message}]
-    tools_used = []
+        tools_json.append(
+            {
+                "name": tool.name,
+                "description": getattr(tool, "description", "") or "",
+                "input_schema": schema,
+            }
+        )
 
-    assistant = anthropic.messages.create(
+    messages = [{"role": "user", "content": req.message}]
+    tools_used: List[str] = []
+
+    assistant = await anthropic_async.messages.create(
         model="claude-3-5-sonnet-20241022",
         max_tokens=1000,
         messages=messages,
@@ -165,32 +213,36 @@ async def chat(req: ChatRequest):
     for item in assistant.content:
         if item.type != "tool_use":
             continue
-
         tools_used.append(item.name)
-        # ── call the tool ───────────────────────
+
         try:
-            raw_result = await client_mgr.call_tool(item.name, item.input or {})
+            raw = await client_mgr.call_tool(item.name, item.input or {})
         except Exception as exc:
-            raw_result = {"error": str(exc)}
+            raw = {"error": str(exc)}
 
-        # ── ensure content is str | list[content-block] ─
-        if isinstance(raw_result, list) and all(
-                isinstance(x, dict) and "type" in x for x in raw_result):
-            result_content = raw_result                # content-blocks
+        if isinstance(raw, list) and all(
+            isinstance(x, dict) and "type" in x for x in raw
+        ):
+            result_content = raw
         else:
-            result_content = json.dumps(raw_result, ensure_ascii=False)
+            safe = _to_json_safe(raw)
+            result_content = json.dumps(safe, ensure_ascii=False)
 
-        # ── feed back to Claude ─────────────────
         messages += [
             {"role": "assistant", "content": [item.model_dump()]},
-            {"role": "user",      "content": [{
-                "type": "tool_result",
-                "tool_use_id": item.id,
-                "content": result_content,
-            }]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": item.id,
+                        "content": result_content,
+                    }
+                ],
+            },
         ]
 
-        assistant = anthropic.messages.create(
+        assistant = await anthropic_async.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             messages=messages,
@@ -198,3 +250,260 @@ async def chat(req: ChatRequest):
 
     final_text = "".join(p.text for p in assistant.content if p.type == "text")
     return {"response": final_text, "tools_used": tools_used}
+
+# ─────────────────── SSE helpers ───────────────────
+
+
+# Add this to the _format_sse function
+async def _format_sse(event: str, data: Any) -> str:
+    """Return a Server-Sent Event string."""
+    json_data = json.dumps(_to_json_safe(data), ensure_ascii=False)
+    formatted = f"event: {event}\ndata: {json_data}\n\n"
+    print(f"Sending SSE: {formatted.strip()}")  # Debug log
+    return formatted
+
+
+# ─────────────────── streaming chat ───────────────────
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    if not client_mgr.initialized:
+        raise HTTPException(503, "MCP not ready")
+
+    async def event_generator():
+        try:
+            # Build tool list with detailed schemas
+            tools_json: List[Dict[str, Any]] = []
+            tool_schemas = {}  # Store schemas for validation later
+            
+            for tool in await client_mgr.list_tools():
+                schema = {"type": "object", "properties": {}, "required": []}
+                for arg in getattr(tool, "arguments", []):
+                    jtype = _py_to_json_type(getattr(arg, "type_", str) or str)
+                    schema["properties"][arg.name] = {
+                        "type": jtype,
+                        "description": getattr(arg, "description", "") or "",
+                    }
+                    if getattr(arg, "required", True) is not False:
+                        schema["required"].append(arg.name)
+                
+                tools_json.append(
+                    {
+                        "name": tool.name,
+                        "description": getattr(tool, "description", "") or "",
+                        "input_schema": schema,
+                    }
+                )
+                tool_schemas[tool.name] = schema  # Save for later validation
+
+            # Build initial message list (history + new user msg)
+            messages: List[Dict[str, Any]] = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in req.history
+            ] if req.history else []
+            messages.append({"role": "user", "content": req.message})
+
+            tools_used: List[str] = []
+            current_text = ""
+
+            # Notify client that streaming starts
+            yield await _format_sse("start", {"status": "started"})
+
+            # Open Claude stream without stream_events parameter
+            async with anthropic_async.messages.stream(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1000,
+                messages=messages,
+                system=SYSTEM_PROMPT,
+                tools=tools_json
+            ) as stream:
+                tool_use_detected = False
+                tool_use = None
+                
+                async for chunk in stream:
+                    # Handle text chunks
+                    if chunk.type == "text":
+                        current_text += chunk.text
+                        yield await _format_sse("text", {"text": chunk.text})
+                        await asyncio.sleep(0)
+                    
+                    # Handle content_block_delta chunks
+                    elif (
+                        chunk.type == "content_block_delta"
+                        and chunk.delta.type == "text"
+                    ):
+                        current_text += chunk.delta.text
+                        yield await _format_sse("text", {"text": chunk.delta.text})
+                        await asyncio.sleep(0)
+
+                    # Handle tool_use blocks
+                    elif (
+                        chunk.type == "content_block_start"
+                        and chunk.content_block.type == "tool_use"
+                    ):
+                        tool_use_detected = True
+                        tool_use = chunk.content_block
+                        tools_used.append(tool_use.name)
+
+                        # Validate required parameters
+                        schema = tool_schemas.get(tool_use.name, {})
+                        required_params = schema.get("required", [])
+                        missing_params = [p for p in required_params if p not in (tool_use.input or {})]
+                        
+                        # Inform client about tool start
+                        yield await _format_sse(
+                            "tool_start",
+                            {
+                                "name": tool_use.name,
+                                "input": tool_use.input,
+                                "status": "starting",
+                                "missing_params": missing_params,
+                            },
+                        )
+                        await asyncio.sleep(0)
+                        
+                        # Log missing parameters if any
+                        if missing_params:
+                            log.warning(
+                                "Tool %s called without required parameters: %s", 
+                                tool_use.name, missing_params
+                            )
+                        
+                        # Call the tool
+                        try:
+                            raw = await client_mgr.call_tool(
+                                tool_use.name, tool_use.input or {}
+                            )
+                            tool_status = "success"
+                        except Exception as exc:
+                            log.error("Error calling tool %s: %s", tool_use.name, exc)
+                            error_msg = str(exc)
+                            
+                            # Provide more helpful error messages for validation errors
+                            if "validation error" in error_msg.lower():
+                                raw = [{"type": "text", "text": f"Missing required information: {error_msg}"}]
+                            else:
+                                raw = [{"type": "text", "text": f"Error: {error_msg}"}]
+                            tool_status = "error"
+                        
+                        # Serialize result
+                        if isinstance(raw, list) and all(
+                            isinstance(x, dict) and "type" in x for x in raw
+                        ):
+                            result_content = raw
+                        else:
+                            safe = _to_json_safe(raw)
+                            result_content = json.dumps(safe, ensure_ascii=False)
+                        
+                        # Send result to client
+                        yield await _format_sse(
+                            "tool_result",
+                            {
+                                "name": tool_use.name,
+                                "result": result_content,
+                                "status": tool_status,
+                            },
+                        )
+                        await asyncio.sleep(0)
+                
+                # If a tool was used, we need to continue the conversation with the tool result
+                if tool_use_detected and tool_use:
+                    # Add the tool use and result to the messages
+                    messages += [
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_use.id,
+                                    "name": tool_use.name,
+                                    "input": tool_use.input or {}
+                                }
+                            ],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use.id,
+                                    "content": result_content,
+                                }
+                            ],
+                        },
+                    ]
+                    
+                    # Continue the conversation with a new stream
+                    yield await _format_sse("text", {"text": "\n\nProcessing the tool result...\n\n"})
+                    
+                    # Start a new stream with the updated messages
+                    async with anthropic_async.messages.stream(
+                        model="claude-3-5-sonnet-20241022",
+                        max_tokens=1000,
+                        messages=messages,
+                    ) as continued_stream:
+                        async for cont_chunk in continued_stream:
+                            if cont_chunk.type == "text":
+                                current_text += cont_chunk.text
+                                yield await _format_sse("text", {"text": cont_chunk.text})
+                                await asyncio.sleep(0)
+                            elif (
+                                cont_chunk.type == "content_block_delta"
+                                and cont_chunk.delta.type == "text"
+                            ):
+                                current_text += cont_chunk.delta.text
+                                yield await _format_sse("text", {"text": cont_chunk.delta.text})
+                                await asyncio.sleep(0)
+
+            # Send final event
+            yield await _format_sse(
+                "done",
+                {"response": current_text, "tools_used": tools_used, "status": "completed"},
+            )
+
+        except Exception as exc:
+            log.exception("Streaming error: %s", exc)
+            yield await _format_sse(
+                "error", {"message": f"Server error: {str(exc)}"}
+            )
+            yield await _format_sse(
+                "done",
+                {
+                    "response": "I'm sorry, there was a server error.",
+                    "tools_used": [],
+                    "status": "error",
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+
+# ─────────────────── list MCP servers ───────────────────
+
+
+@app.get("/mcps")
+async def list_mcps():
+    if not client_mgr.initialized:
+        raise HTTPException(503, "MCP not ready")
+
+    tools = await client_mgr.list_tools()
+
+    # extract unique MCP names – tool name might be "mcp/tool"
+    mcp_set = {tool.name.split("/")[0] for tool in tools}
+
+    # include server names from handshake config
+    mcp_set.update(client_mgr._cfg.keys())
+
+    return {"mcps": sorted(mcp_set)}

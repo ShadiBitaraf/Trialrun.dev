@@ -5,7 +5,7 @@ mentioned in the handshake payload.
 
 🔄 2025-04-26 update
 ────────────────────
-• Replaces all  “uv … run python <script>”  launches with a generic
+• Replaces all  "uv … run python <script>"  launches with a generic
   runner:   python  <backend>/run_mcp.py  <script_path>
   so no external `uv` binary is required and every MCP server is
   started the same way.
@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -82,22 +83,37 @@ def _normalise_server(name: str, conf: dict, repo_base: Path):
 
 
 # ─────────────────────────── main API ────────────────────────
-def init_mcp(payload, sandbox_base: str = "./mcp_sandboxes"):
+def init_mcp(payload, sandbox_base: str = "./mcp_sandboxes", session_id: str = None):
     """
     Accepts either:
     • NEW style  – single dict containing `settings.mcpServers`
     • OLD style  – list of DB records
 
     Emits mcp.json + .env next to the backend code.
+    
+    Args:
+        payload: The configuration payload
+        sandbox_base: Base directory for sandboxes
+        session_id: Optional session ID for the handshake
     """
     repo_base = Path(sandbox_base).expanduser().resolve()
     repo_base.mkdir(parents=True, exist_ok=True)
 
+    # Generate a session ID if not provided
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+    
+    # Store session_id in environment variables
+    env_vars = {"SESSION_ID": session_id}
+    
     mcp_cfg: dict = {"mcpServers": {}}
-    env_vars: dict[str, str] = {}
 
     # ─── new-style payload ───
     if isinstance(payload, dict) and "settings" in payload:
+        # Add session_id to the payload for future API calls
+        if "sandbox_id" in payload:
+            payload["session_id"] = session_id
+            
         servers = payload["settings"].get("mcpServers", {})
         for name, conf in servers.items():
             norm, env = _normalise_server(name, conf, repo_base)
@@ -112,6 +128,9 @@ def init_mcp(payload, sandbox_base: str = "./mcp_sandboxes"):
             name = rec["mcp_name"]
             conf = deepcopy(rec)
             conf.pop("mcp_name", None)
+            
+            # Add session_id to each record
+            conf["session_id"] = session_id
 
             # hosted URL?
             if rec.get("hosted") or rec.get("type") == "url":
@@ -125,6 +144,8 @@ def init_mcp(payload, sandbox_base: str = "./mcp_sandboxes"):
         raise ValueError("Unsupported payload type supplied to init_mcp()")
 
     _write_files(mcp_cfg, env_vars)
+    
+    return session_id
 
 
 # ───────── CLI helper:  python init.py payload.json ──────────
@@ -132,4 +153,11 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("usage: python init.py <payload.json>")
         sys.exit(1)
-    init_mcp(json.loads(Path(sys.argv[1]).read_text()))
+    
+    payload_data = json.loads(Path(sys.argv[1]).read_text())
+    
+    # Check if session_id is in the payload, otherwise generate one
+    session_id = payload_data.get("session_id") if isinstance(payload_data, dict) else None
+    
+    # Initialize MCP with the payload and session_id
+    init_mcp(payload_data, session_id=session_id)
