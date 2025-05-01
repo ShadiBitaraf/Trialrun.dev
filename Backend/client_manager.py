@@ -47,6 +47,17 @@ class MCPClientManager:
         return await self._core.call_tool(name, args)
 
     async def close(self):
+        """Close all connections and clean up resources."""
         if self.initialized and self._core:
-            await self._core.close()
-            self.initialized = False
+            try:
+                # Close all connections in the core client
+                for ctx in self._core._ctxs:
+                    await ctx.exit()
+                self._core._ctxs = []
+                self._core._sessions = {}
+                self.initialized = False
+                return True
+            except Exception as e:
+                log.error(f"Error closing MCP client: {e}")
+                return False
+        return True

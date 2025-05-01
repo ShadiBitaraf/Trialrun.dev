@@ -8,6 +8,7 @@ import dataclasses
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, get_origin
 
@@ -20,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from init import _normalise_server
+from init import _normalise_server, init_mcp
 
 # ─────────────────── env / logging ───────────────────
 
@@ -32,6 +33,7 @@ SANDBOX_ID    = os.getenv("SANDBOX_ID",  "6XEJOvlItX4UIGOB2s0Z")
 HANDSHAKE_URL = os.getenv("HANDSHAKE_URL",
                           "https://api-rough-bush-2430.fly.dev/handshake")
 BASE_URL      = os.getenv("BASE_URL",    "http://localhost:8000")
+CONFIG_CHECK_INTERVAL = 60  # Check for config changes every 60 seconds
 
 anthropic_async = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 client_mgr      = MCPClientManager()
@@ -43,6 +45,7 @@ Make sure to give the desired input and prompt the user of that input when neede
 """.strip()
 
 SYSTEM_PROMPT: str | None = None
+LAST_CONFIG_HASH: str | None = None
 
 # ─────────────────── pydantic models ───────────────────
 
@@ -86,17 +89,33 @@ def _to_json_safe(o: Any) -> Any:
     return str(o)
 
 
-async def _handshake() -> Dict[str, Any]:
+def _hash_config(config: Dict[str, Any]) -> str:
+    """Create a hash of the config to detect changes."""
+    return json.dumps(config, sort_keys=True)
+
+
+async def _handshake(include_base_url: bool = True) -> Dict[str, Any]:
+    """
+    Perform handshake with the server to get configuration.
+    
+    Args:
+        include_base_url: Whether to include base_url in the handshake request.
+                         Set to False for config checks to avoid overwriting.
+    """
+    handshake_data = {"sandbox_id": SANDBOX_ID}
+    if include_base_url:
+        handshake_data["base_url"] = BASE_URL
+        
     async with httpx.AsyncClient() as s:
         resp = await s.post(
             HANDSHAKE_URL,
-            json={"sandbox_id": SANDBOX_ID, "base_url": BASE_URL},
+            json=handshake_data,
             timeout=15,
         )
         resp.raise_for_status()
         data: Dict[str, Any] = resp.json()
 
-    global SYSTEM_PROMPT
+    global SYSTEM_PROMPT, LAST_CONFIG_HASH
     SYSTEM_PROMPT = (
         (data.get("system_prompt") or data.get("systemPrompt") or "") +
         "\n\n" + POLICY_PROMPT
@@ -117,9 +136,56 @@ async def _handshake() -> Dict[str, Any]:
         norm, _ = _normalise_server(name, conf, repo)
         servers[name] = norm
 
+    # Update the config hash
+    LAST_CONFIG_HASH = _hash_config(servers)
+    
     log.info("normalised mcpServers: %s", json.dumps(servers, indent=2))
     Path("mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
     return servers
+
+
+async def _check_config_changes():
+    """
+    Periodically check for configuration changes from the handshake endpoint.
+    If changes are detected, reinitialize the MCP client.
+    """
+    global LAST_CONFIG_HASH
+    
+    while True:
+        try:
+            log.info("Checking for configuration changes...")
+            
+            # Get current config without base_url to avoid overwriting
+            data = await _handshake(include_base_url=False)
+            
+            # Calculate hash of new config
+            new_hash = _hash_config(data)
+            
+            # If config has changed, reinitialize
+            if LAST_CONFIG_HASH != new_hash:
+                log.info("Configuration changes detected, reinitializing...")
+                
+                # Update the client manager configuration
+                client_mgr._cfg = data
+                
+                # Close existing connections
+                await client_mgr.close()
+                
+                # Reinitialize with new config
+                await client_mgr.initialize()
+                
+                # Update the stored hash
+                LAST_CONFIG_HASH = new_hash
+                
+                log.info("Reinitialization complete with new configuration")
+            else:
+                log.info("No configuration changes detected")
+                
+        except Exception as e:
+            log.error(f"Error checking for configuration changes: {str(e)}")
+            
+        # Wait for the next check interval
+        await asyncio.sleep(CONFIG_CHECK_INTERVAL)
 
 # ─────────────────── FastAPI ───────────────────
 
@@ -137,6 +203,9 @@ app.add_middleware(
 async def _startup():
     client_mgr._cfg = await _handshake()
     await client_mgr.initialize()
+    
+    # Start the background task to check for config changes
+    asyncio.create_task(_check_config_changes())
 
 
 @app.on_event("shutdown")
@@ -507,3 +576,183 @@ async def list_mcps():
     mcp_set.update(client_mgr._cfg.keys())
 
     return {"mcps": sorted(mcp_set)}
+
+# Add this new model to the pydantic models section
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP server."""
+    command: str = None
+    args: List[str] = None
+    url: str = None
+    env: Dict[str, str] = None
+    github: str = None
+
+class ConfigureRequest(BaseModel):
+    """Request body for the /configure endpoint."""
+    servers: Dict[str, MCPServerConfig]
+
+# Add this new endpoint
+@app.post("/configure")
+async def configure(req: ConfigureRequest):
+    """
+    Add or update MCP server configurations.
+    
+    Example request:
+    
+    {
+        "servers": {
+            "my_mcp_server": {
+                "command": "python",
+                "args": ["path/to/script.py"],
+                "env": {"API_KEY": "your-api-key"}
+            },
+            "remote_server": {
+                "url": "https://example.com/mcp"
+            },
+            "github_server": {
+                "github": "https://github.com/username/repo",
+                "command": "python",
+                "args": ["main.py"]
+            }
+        }
+    }
+    
+    
+    Each server configuration can include:
+    - command: The command to run (for local servers)
+    - args: List of arguments for the command
+    - url: URL for remote servers
+    - env: Environment variables
+    - github: GitHub repository URL to clone
+    """
+    if not client_mgr.initialized:
+        raise HTTPException(503, "MCP not ready")
+    
+    # Get current config
+    current_config = client_mgr._cfg.copy()
+    repo = Path("./mcp_sandboxes").resolve()
+    
+    # Process each server in the request
+    for name, server_config in req.servers.items():
+        # Convert pydantic model to dict
+        config_dict = server_config.model_dump(exclude_none=True)
+        
+        # Normalize the server configuration
+        try:
+            norm, env_vars = _normalise_server(name, config_dict, repo)
+            
+            # Update the current configuration
+            current_config[name] = norm
+            
+            # If there are environment variables, we should handle them
+            # For now, we'll just log them
+            if env_vars:
+                log.info(f"Server '{name}' has environment variables: {env_vars}")
+        except Exception as e:
+            log.error(f"Error normalizing server '{name}': {e}")
+            raise HTTPException(400, f"Error configuring server '{name}': {str(e)}")
+    
+    # Update the client manager configuration
+    client_mgr._cfg = current_config
+    
+    # Update mcp.json file
+    Path("mcp.json").write_text(json.dumps({"mcpServers": current_config}, indent=2))
+    
+    # Close existing connections
+    await client_mgr.close()
+    
+    # Reinitialize with new config
+    await client_mgr.initialize()
+    
+    # Update the config hash
+    global LAST_CONFIG_HASH
+    LAST_CONFIG_HASH = _hash_config(current_config)
+    
+    return {
+        "status": "success",
+        "message": f"Added/updated {len(req.servers)} MCP server(s)",
+        "servers": list(current_config.keys())
+    }
+from fastapi import Body
+
+# Add this to the pydantic models section
+class UserConfigResponse(BaseModel):
+    """Response for the /user-config endpoint."""
+    config: str
+
+@app.get("/user-config")
+async def get_user_config():
+    """
+    Retrieve the user-defined MCP server configurations.
+    Returns the raw JSON content as a string from the user_config.json file.
+    """
+    try:
+        config_path = Path("user_config.json")
+        if config_path.exists():
+            config_content = config_path.read_text()
+            return {"config": config_content}
+        else:
+            # Return empty config if file doesn't exist
+            return {"config": "{\n  \"servers\": {}\n}"}
+    except Exception as e:
+        log.error(f"Error reading user configuration: {e}")
+        raise HTTPException(500, f"Error reading user configuration: {str(e)}")
+
+@app.post("/save-user-config")
+async def save_user_config(config_text: str = Body(...)):
+    """
+    Save user-defined MCP server configurations.
+    
+    The request body should be the raw JSON text of the configuration.
+    This will be saved to user_config.json and also applied to the current configuration.
+    """
+    try:
+        # Parse the JSON to validate it
+        try:
+            config_data = json.loads(config_text)
+            if not isinstance(config_data, dict) or "servers" not in config_data:
+                raise ValueError("Configuration must contain a 'servers' object")
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Invalid JSON format")
+        
+        # Save the raw text to file
+        config_path = Path("user_config.json")
+        config_path.write_text(config_text)
+        
+        # Apply the configuration
+        repo = Path("./mcp_sandboxes").resolve()
+        current_config = client_mgr._cfg.copy()
+        
+        for name, server_config in config_data["servers"].items():
+            try:
+                norm, env_vars = _normalise_server(name, server_config, repo)
+                current_config[name] = norm
+            except Exception as e:
+                log.error(f"Error normalizing server '{name}': {e}")
+                # Continue with other servers even if one fails
+        
+        # Update the client manager configuration
+        client_mgr._cfg = current_config
+        
+        # Update mcp.json file
+        Path("mcp.json").write_text(json.dumps({"mcpServers": current_config}, indent=2))
+        
+        # Close existing connections
+        await client_mgr.close()
+        
+        # Reinitialize with new config
+        await client_mgr.initialize()
+        
+        # Update the config hash
+        global LAST_CONFIG_HASH
+        LAST_CONFIG_HASH = _hash_config(current_config)
+        
+        return {
+            "status": "success",
+            "message": "User configuration saved and applied",
+            "servers": list(current_config.keys())
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error saving user configuration: {e}")
+        raise HTTPException(500, f"Error saving user configuration: {str(e)}")
