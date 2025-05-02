@@ -1,0 +1,15 @@
+# Core dependencies
+fastapi
+uvicorn
+pydantic
+httpx
+python-dotenv
+
+# Anthropic API client
+anthropic
+
+# MCP client dependencies
+mcp  # Adjust version as needed
+
+# Other utilities
+requests

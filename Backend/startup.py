@@ -31,9 +31,9 @@ logging.basicConfig(level=logging.INFO)
 
 # ──────────────────────────────────────────────────────────
 async def main() -> None:
-    sandbox_id      = os.getenv("SANDBOX_ID",      "6XEJOvlItX4UIGOB2s0Z")
+    sandbox_id      = os.getenv("SANDBOX_ID",)
     central_api_url = os.getenv("CENTRAL_API_URL", "https://api-rough-bush-2430.fly.dev")
-    base_url        = os.getenv("BASE_URL",        "http://localhost:8000")
+    base_url        = os.getenv("BASE_URL")
 
     log.info("Starting sandbox id=%s  base_url=%s", sandbox_id, base_url)
 

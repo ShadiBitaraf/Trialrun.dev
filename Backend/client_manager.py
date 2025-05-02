@@ -3,7 +3,7 @@ Compatibility wrapper so old imports (`from client_manager ...`) keep working
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp_client import MCPMultiClient
 
@@ -34,6 +34,12 @@ class MCPClientManager:
         if not self.initialized:
             raise RuntimeError("MCP client not initialized")
         return await self._core.list_tools()
+    
+    async def list_mcps(self) -> List[str]:
+        """Return a list of all connected MCP server names."""
+        if not self.initialized:
+            raise RuntimeError("MCP client not initialized")
+        return list(self._cfg.keys())
 
     async def call_tool(self, name: str, args: Dict[str, Any]):
         if not self.initialized:
@@ -41,6 +47,17 @@ class MCPClientManager:
         return await self._core.call_tool(name, args)
 
     async def close(self):
+        """Close all connections and clean up resources."""
         if self.initialized and self._core:
-            await self._core.close()
-            self.initialized = False
+            try:
+                # Close all connections in the core client
+                for ctx in self._core._ctxs:
+                    await ctx.exit()
+                self._core._ctxs = []
+                self._core._sessions = {}
+                self.initialized = False
+                return True
+            except Exception as e:
+                log.error(f"Error closing MCP client: {e}")
+                return False
+        return True
